@@ -1,5 +1,4 @@
-# redis категория, товар
-#
+# Валидация(pydantic схема для sqlalchemy обьектов
 
 from os import getenv
 import asyncio

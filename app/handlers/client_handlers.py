@@ -62,17 +62,13 @@ async def add_item_to_cart(callback: CallbackQuery):
         )
     )
 
-
+# Функция для сброса клавиатуры(убрать xКоличество_товара)
 @client_router.callback_query(F.data.startswith("reset_cart_category_"))
 async def reset_cart(callback: CallbackQuery):
     await callback.answer('')
     # Очищаем корзину клиента в редис
     await clear_cart(user_id=callback.from_user.id)
-    new_markup = await client_kb.reset_items_count(callback.message.reply_markup)
     await callback.message.edit_text(
         text="🌑 Итого: 0р.",
-        reply_markup=await client_kb.items_kb(
-            user_id=callback.from_user.id,
-            category_id=int(callback.data.lstrip("reset_cart_category_"))
-        )
+        reply_markup=await client_kb.reset_items_count(callback.message.reply_markup)
     )

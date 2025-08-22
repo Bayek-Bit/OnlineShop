@@ -22,9 +22,10 @@ async def categories_kb():
 
 
 async def items_kb(user_id: int, category_id: int):
-    category_items_kb = await get_items_by_category(category_id)
+    """Рисует клавиатуру с доступными товарами."""
+    category_items = await get_items_by_category(category_id)
     kb = InlineKeyboardBuilder()
-    for item in category_items_kb:
+    for item in category_items:
         # Ищем в redis количество выбранного товара (0 - если нет)
         # Не добавляем "Товар (xКол-во)" в случае, если товар не был выбран хоть раз
         count = await get_cart_item_qty(user_id, item.id)
@@ -32,16 +33,31 @@ async def items_kb(user_id: int, category_id: int):
             button_text = f"{item.name} (x{count})" # Товар (xКоличество выбранного товара)
         else:
             button_text = item.name
+
         kb.row(InlineKeyboardButton(
             text=button_text,
             callback_data=f"add_item_{category_id}_{item.id}"
         ))
-    # Передаем categpry_id, чтобы отобразить новую клавиатуру с товарами этой категории
-    kb.row(InlineKeyboardButton(text="🗑 Сбросить корзину", callback_data=f"reset_cart_category_{category_id}"))
+
+    # Передаем category_id, чтобы отобразить новую клавиатуру с товарами этой категории
+    kb.row(InlineKeyboardButton(
+        text="🗑 Сбросить корзину",
+        callback_data=f"reset_cart_category_{category_id}"
+        )
+    )
+
     kb.row(InlineKeyboardButton(text="На главную", callback_data="catalog"))
     return kb.as_markup()
 
 
-async def reset_items_count(reply_markup):
-    """Возвращает новую клавиатуру, где у товарных кнопок убран суффикс ' (xN)'."""
-    pass
+async def reset_items_count(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
+    """
+    Возвращает клавиатуру с товарами без счетчиков возле названия товара.
+    Input: Item (x1)
+    Output: Item
+    """
+    for row in markup.inline_keyboard:
+        for button in row:
+            if "(x" in button.text:
+                button.text = button.text.split(" (x")[0]
+    return markup
