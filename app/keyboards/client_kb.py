@@ -8,7 +8,14 @@ from app.settings.messages import reviews_channel, main_channel
 
 menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Каталог ✨", callback_data="catalog")],
-    [InlineKeyboardButton(text="Наш канал 🪄", url=main_channel), InlineKeyboardButton(text="Отзывы 📗", url=reviews_channel)]
+    [InlineKeyboardButton(text="О нас", callback_data="about")]
+])
+
+about_us = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(text="Наш канал 🪄", url=main_channel),
+        InlineKeyboardButton(text="Отзывы 📗", url=reviews_channel)
+     ]
 ])
 
 async def categories_kb():
@@ -46,7 +53,10 @@ async def items_kb(user_id: int, category_id: int):
         )
     )
 
-    kb.row(InlineKeyboardButton(text="На главную", callback_data="catalog"))
+    kb.row(
+        InlineKeyboardButton(text="🏠На главную", callback_data="catalog"),
+        InlineKeyboardButton(text="✅ Подтвердить", callback_data="create_order")
+    )
     return kb.as_markup()
 
 
@@ -56,8 +66,16 @@ async def reset_items_count(markup: InlineKeyboardMarkup) -> InlineKeyboardMarku
     Input: Item (x1)
     Output: Item
     """
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[])
     for row in markup.inline_keyboard:
+        new_row = []
         for button in row:
-            if "(x" in button.text:
-                button.text = button.text.split(" (x")[0]
-    return markup
+            new_text = button.text.split(" (x")[0] if "(x" in button.text else button.text
+            new_button = InlineKeyboardButton(
+                text=new_text,
+                callback_data=button.callback_data,
+                url=button.url
+            )
+            new_row.append(new_button)
+        new_kb.inline_keyboard.append(new_row)
+    return new_kb

@@ -1,4 +1,7 @@
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
 
@@ -11,6 +14,10 @@ from app.settings.messages import First_message
 
 client_router = Router()
 
+class OrderForm(StatesGroup):
+    game = State()
+    category = State()
+
 @client_router.message(CommandStart())
 async def start(message: Message):
     is_new = await set_user(message.from_user.id)
@@ -22,22 +29,28 @@ async def start(message: Message):
 
 @client_router.callback_query(F.data == "main_menu")
 async def start(callback: CallbackQuery):
-    await clear_cart(user_id=callback.message.from_user.id)
+    await clear_cart(user_id=callback.from_user.id)
     await callback.answer('')
-    await callback.message.edit_text(text=First_message, reply_markup=client_kb.menu)
+    try:
+        await callback.message.edit_text(text=First_message, reply_markup=client_kb.menu)
+    except TelegramBadRequest:
+        await callback.message.delete()
+        await callback.message.answer(text=First_message, reply_markup=client_kb.menu)
 
 
 @client_router.callback_query(F.data == "catalog")
-async def send_catalog(callback: CallbackQuery):
-    await clear_cart(user_id=callback.message.from_user.id)
+async def send_catalog(callback: CallbackQuery, state: FSMContext):
+    await clear_cart(user_id=callback.from_user.id)
+    await state.set_state(OrderForm.game)
     await callback.answer('')
     await callback.message.edit_text("Выберите категорию:", reply_markup=await client_kb.categories_kb())
 
 
-@client_router.callback_query(F.data.startswith("category_"))
-async def send_items(callback: CallbackQuery):
+@client_router.callback_query(OrderForm.game, F.data.startswith("category_"))
+async def send_items(callback: CallbackQuery, state: FSMContext):
     await callback.answer('')
-    category_id = callback.data.lstrip("category_") # category_1 -> getting category id 1
+    await state.set_state(OrderForm.category)
+    category_id = callback.data.removeprefix("category_") # category_1 -> getting category id 1
     category_id = int(category_id) # get_items_kb should get int type
     await callback.message.edit_text("Выберите товар:", reply_markup=await client_kb.items_kb(
         user_id=callback.from_user.id,
@@ -45,7 +58,7 @@ async def send_items(callback: CallbackQuery):
     ))
 
 
-@client_router.callback_query(F.data.startswith("add_item_"))
+@client_router.callback_query(OrderForm.category, F.data.startswith("add_item_"))
 async def add_item_to_cart(callback: CallbackQuery):
     await callback.answer('')
     # add_item_{category_id}_{item_id}
@@ -63,7 +76,7 @@ async def add_item_to_cart(callback: CallbackQuery):
     )
 
 # Функция для сброса клавиатуры(убрать xКоличество_товара)
-@client_router.callback_query(F.data.startswith("reset_cart_category_"))
+@client_router.callback_query(OrderForm.category, F.data.startswith("reset_cart_category_"))
 async def reset_cart(callback: CallbackQuery):
     await callback.answer('')
     # Очищаем корзину клиента в редис
