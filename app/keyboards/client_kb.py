@@ -55,7 +55,7 @@ async def items_kb(user_id: int, category_id: int):
 
     kb.row(
         InlineKeyboardButton(text="🏠На главную", callback_data="catalog"),
-        InlineKeyboardButton(text="✅ Подтвердить", callback_data="create_order")
+        InlineKeyboardButton(text="✅Подтвердить", callback_data="create_order")
     )
     return kb.as_markup()
 

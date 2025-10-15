@@ -15,8 +15,9 @@ from app.settings.messages import First_message
 client_router = Router()
 
 class OrderForm(StatesGroup):
-    game = State()
-    category = State()
+    choosing_game = State()
+    choosing_category = State()
+    waiting_for_payment = State()
 
 @client_router.message(CommandStart())
 async def start(message: Message):
@@ -41,15 +42,15 @@ async def start(callback: CallbackQuery):
 @client_router.callback_query(F.data == "catalog")
 async def send_catalog(callback: CallbackQuery, state: FSMContext):
     await clear_cart(user_id=callback.from_user.id)
-    await state.set_state(OrderForm.game)
+    await state.set_state(OrderForm.choosing_game)
     await callback.answer('')
     await callback.message.edit_text("Выберите категорию:", reply_markup=await client_kb.categories_kb())
 
-
-@client_router.callback_query(OrderForm.game, F.data.startswith("category_"))
+# Выбор товара в категории
+@client_router.callback_query(OrderForm.choosing_game, F.data.startswith("category_"))
 async def send_items(callback: CallbackQuery, state: FSMContext):
     await callback.answer('')
-    await state.set_state(OrderForm.category)
+    await state.set_state(OrderForm.choosing_category)
     category_id = callback.data.removeprefix("category_") # category_1 -> getting category id 1
     category_id = int(category_id) # get_items_kb should get int type
     await callback.message.edit_text("Выберите товар:", reply_markup=await client_kb.items_kb(
@@ -57,8 +58,8 @@ async def send_items(callback: CallbackQuery, state: FSMContext):
         category_id=category_id
     ))
 
-
-@client_router.callback_query(OrderForm.category, F.data.startswith("add_item_"))
+# Добавление товара в корзину + появление/увеличение счетчика + итоговая сумма заказа
+@client_router.callback_query(OrderForm.choosing_category, F.data.startswith("add_item_"))
 async def add_item_to_cart(callback: CallbackQuery):
     await callback.answer('')
     # add_item_{category_id}_{item_id}
@@ -76,7 +77,7 @@ async def add_item_to_cart(callback: CallbackQuery):
     )
 
 # Функция для сброса клавиатуры(убрать xКоличество_товара)
-@client_router.callback_query(OrderForm.category, F.data.startswith("reset_cart_category_"))
+@client_router.callback_query(OrderForm.choosing_category, F.data.startswith("reset_cart_category_"))
 async def reset_cart(callback: CallbackQuery):
     await callback.answer('')
     # Очищаем корзину клиента в редис
@@ -85,3 +86,9 @@ async def reset_cart(callback: CallbackQuery):
         text="🌑 Итого: 0р.",
         reply_markup=await client_kb.reset_items_count(callback.message.reply_markup)
     )
+
+
+@client_router.callback_query(OrderForm.choosing_category, F.data == "create_order")
+async def create_order(callback: CallbackQuery):
+    await callback.answer('')
+    # await

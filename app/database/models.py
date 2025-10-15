@@ -1,6 +1,6 @@
-from sqlalchemy import String, BigInteger, Integer, ForeignKey
-from sqlalchemy.dialects.oracle import NUMBER
-from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
+from datetime import datetime
+from sqlalchemy import String, BigInteger, Integer, ForeignKey, DateTime
+from sqlalchemy.orm import Mapped, mapped_column, relationship, DeclarativeBase
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 
 from app.settings.settings import settings
@@ -27,16 +27,31 @@ class Category(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, nullable=False)
     name: Mapped[str] = mapped_column(String(25), unique=True, nullable=False)
+    items: Mapped[list["Item"]] = relationship("Item", back_populates="category")
 
 class Item(Base):
     __tablename__ = "items"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, nullable=False)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
+    category: Mapped["Category"] = relationship("Category", back_populates="category")
     name: Mapped[str] = mapped_column(String(25), nullable=False)
     description: Mapped[str] = mapped_column(String(512), nullable=True)
     price: Mapped[int] = mapped_column(Integer, nullable=False)
 
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    total_sum: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(25), default="pending_payment", nullable=False)
+    executor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
+    executor: Mapped["User"] = relationship(ForeignKey("user.id"))
+    # время создания
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    # дедлайн оплаты
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
 async def create_tables():
     async with engine.begin() as conn:
