@@ -1,3 +1,5 @@
+import re
+
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -21,6 +23,11 @@ about_us = InlineKeyboardMarkup(inline_keyboard=[
 async def games_kb():
     all_games = await get_games()
     kb = InlineKeyboardBuilder()
+    # Если игр нет в базе данных
+    if not all_games:
+        kb.row(InlineKeyboardButton(text="Нет доступных игр", callback_data="main_menu"))
+        return kb.as_markup()
+    # Если игры есть
     for game in all_games:
         kb.row(InlineKeyboardButton(text=game.name, callback_data=f"game_{game.id}"))
     kb.row(InlineKeyboardButton(text="На главную", callback_data="main_menu"))
@@ -29,6 +36,11 @@ async def games_kb():
 async def categories_kb(game_id: int):
     all_categories = await get_categories_by_game(game_id)
     kb = InlineKeyboardBuilder()
+    # Если категорий нет в базе данных
+    if not all_categories:  # FIXED: Добавил обработку пустого списка (нет категорий)
+        kb.row(InlineKeyboardButton(text="Нет категорий для этой игры", callback_data="back_to_games"))
+        return kb.as_markup()
+    # Если категории есть
     for category in all_categories:
         kb.row(InlineKeyboardButton(text=category.name, callback_data=f"category_{category.id}"))
     kb.row(InlineKeyboardButton(text="🔙 Назад к играм", callback_data="back_to_games"))
@@ -40,6 +52,11 @@ async def items_kb(user_id: int, category_id: int):
     """Рисует клавиатуру с доступными товарами."""
     category_items = await get_items_by_category(category_id)
     kb = InlineKeyboardBuilder()
+    # Если товаров нет в базе данных
+    if not category_items:  # FIXED: Добавил обработку пустого списка (нет товаров)
+        kb.row(InlineKeyboardButton(text="Нет товаров в этой категории", callback_data="back_to_categories"))
+        return kb.as_markup()
+    # Если товары есть
     for item in category_items:
         # Ищем в redis количество выбранного товара (0 - если нет)
         # Не добавляем "Товар (xКол-во)" в случае, если товар не был выбран хоть раз
@@ -78,7 +95,8 @@ async def reset_items_count(markup: InlineKeyboardMarkup) -> InlineKeyboardMarku
     for row in markup.inline_keyboard:
         new_row = []
         for button in row:
-            new_text = button.text.split(" (x")[0] if "(x" in button.text else button.text
+            # Убираем счетчик товаров - (xN)
+            new_text = re.sub(r' \(.+\)', '', button.text)
             new_button = InlineKeyboardButton(
                 text=new_text,
                 callback_data=button.callback_data,
