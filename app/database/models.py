@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import String, BigInteger, Integer, ForeignKey, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship, DeclarativeBase
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
@@ -22,11 +22,20 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(25), nullable=False)
 
 
+class Game(Base):
+    __tablename__ = "games"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    categories: Mapped[list["Category"]] = relationship("Category", back_populates="game")
+
 class Category(Base):
     __tablename__ = "categories"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, nullable=False)
     name: Mapped[str] = mapped_column(String(25), unique=True, nullable=False)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False)
+    game: Mapped["Game"] = relationship("Game", back_populates="categories")
     items: Mapped[list["Item"]] = relationship("Item", back_populates="category")
 
 class Item(Base):
@@ -44,15 +53,15 @@ class Order(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    user: Mapped[int] = relationship("User", foreign_keys=[user_id])
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
     total_sum: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(25), default="pending_payment", nullable=False)
     executor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
     executor: Mapped["User"] = relationship("User", foreign_keys=[executor_id])
     # время создания
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     # дедлайн оплаты
-    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
 async def create_tables():
     async with engine.begin() as conn:
