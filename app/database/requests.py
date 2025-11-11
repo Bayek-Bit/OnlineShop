@@ -27,6 +27,7 @@ async def get_games():
         games = await session.scalars(select(Game))
         return games.all()
 
+
 async def get_categories_by_game(game_id: int):
     async with async_session() as session:
         categories = session.scalars(select(Category).where(Category.game_id == game_id))

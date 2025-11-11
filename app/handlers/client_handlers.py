@@ -17,6 +17,7 @@ client_router = Router()
 class OrderForm(StatesGroup):
     choosing_game = State()
     choosing_category = State()
+    choosing_item = State()
     waiting_for_payment = State()
 
 @client_router.message(CommandStart())
@@ -41,25 +42,34 @@ async def start(callback: CallbackQuery):
 
 @client_router.callback_query(F.data == "catalog")
 async def send_catalog(callback: CallbackQuery, state: FSMContext):
-    await clear_cart(user_id=callback.from_user.id)
+    # await clear_cart(user_id=callback.from_user.id) # - убрано, чтобы сохранить корзину при навигации
     await state.set_state(OrderForm.choosing_game)
     await callback.answer('')
     await callback.message.edit_text("Выберите категорию:", reply_markup=await client_kb.categories_kb())
 
-# Выбор товара в категории
-@client_router.callback_query(OrderForm.choosing_game, F.data.startswith("category_"))
+# Выбор игры
+@client_router.callback_query(OrderForm.choosing_game, F.data.startswith("game_"))
 async def send_items(callback: CallbackQuery, state: FSMContext):
     await callback.answer('')
+    game_id = int(callback.data.removeprefix("game_"))
+    await state.update_data(game_id = game_id)
     await state.set_state(OrderForm.choosing_category)
-    category_id = callback.data.removeprefix("category_") # category_1 -> getting category id 1
-    category_id = int(category_id) # get_items_kb should get int type
+    await callback.message.edit_text("Выберите игру:", reply_markup=await client_kb.categories_kb(game_id))
+
+# Выбор категории
+@client_router.callback_query(OrderForm.choosing_category, F.data.startswith("category_"))
+async def send_items(callback: CallbackQuery, state: FSMContext):
+    await callback.answer('')
+    category_id = int(callback.data.removeprefix("category_"))
+    await state.update_data(category_id=category_id)  # Сохраняем для будущего
+    await state.set_state(OrderForm.choosing_item)
     await callback.message.edit_text("Выберите товар:", reply_markup=await client_kb.items_kb(
         user_id=callback.from_user.id,
         category_id=category_id
     ))
 
 # Добавление товара в корзину + появление/увеличение счетчика + итоговая сумма заказа
-@client_router.callback_query(OrderForm.choosing_category, F.data.startswith("add_item_"))
+@client_router.callback_query(OrderForm.choosing_item, F.data.startswith("add_item_"))
 async def add_item_to_cart(callback: CallbackQuery):
     await callback.answer('')
     # add_item_{category_id}_{item_id}
@@ -77,7 +87,7 @@ async def add_item_to_cart(callback: CallbackQuery):
     )
 
 # Функция для сброса клавиатуры(убрать xКоличество_товара)
-@client_router.callback_query(OrderForm.choosing_category, F.data.startswith("reset_cart_category_"))
+@client_router.callback_query(OrderForm.choosing_item, F.data.startswith("reset_cart_category_"))
 async def reset_cart(callback: CallbackQuery):
     await callback.answer('')
     # Очищаем корзину клиента в редис
@@ -87,8 +97,30 @@ async def reset_cart(callback: CallbackQuery):
         reply_markup=await client_kb.reset_items_count(callback.message.reply_markup)
     )
 
+# Бэк к категориям из товаров
+@client_router.callback_query(OrderForm.choosing_item, F.data == "back_to_categories")
+async def back_to_categories(callback: CallbackQuery, state: FSMContext):
+    await callback.answer('')
+    data = await state.get_data()
+    game_id = data.get('game_id')
+    if game_id:
+        await state.set_state(OrderForm.choosing_category)
+        await callback.message.edit_text("Выберите категорию:", reply_markup=await client_kb.categories_kb(game_id))
+    else:
+        # Fallback, если game_id потерян
+        await callback.message.edit_text("Ошибка. Вернитесь в каталог.", reply_markup=client_kb.menu)
 
-@client_router.callback_query(OrderForm.choosing_category, F.data == "create_order")
+# Бэк к играм из категорий (если нужно, но "catalog" уже есть)
+@client_router.callback_query(OrderForm.choosing_category, F.data == "back_to_games")
+async def back_to_games(callback: CallbackQuery, state: FSMContext):
+    await callback.answer('')
+    await state.set_state(OrderForm.choosing_game)
+    await callback.message.edit_text("Выберите игру:", reply_markup=await client_kb.games_kb())
+
+# Создание заказа
+@client_router.callback_query(OrderForm.choosing_item, F.data == "create_order")
 async def create_order(callback: CallbackQuery):
     await callback.answer('')
-    # await
+    # Здесь позже: создание заказа с state.data['game_id'], ['category_id'], корзиной из Redis
+    # Например: await create_order_in_db(callback.from_user.id, state)
+    # Переход к waiting_for_payment
