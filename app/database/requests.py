@@ -33,12 +33,6 @@ async def get_categories_by_game(game_id: int):
         return categories.all()
 
 
-async def get_categories():
-    async with async_session() as session:
-        categories = await session.scalars(select(Category))
-        return categories.all()
-
-
 async def get_items_by_category(category_id: int) -> list[Item]:
     """
     Возвращает список товаров категории.
