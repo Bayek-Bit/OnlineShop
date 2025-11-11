@@ -6,17 +6,22 @@
 # Назначение исполнителя(если нет свободных, то таймер 5 мин и снова попытка назначить)
 # Список товаров прямо в модели заказа / получать из redis
 # create order
+
+# Обработка исключений по подключению редиса и тп
+# Обработчик для about (about us)
 import asyncio
 from aiogram import Bot, Dispatcher
 
 from app.settings.settings import settings
 
 from app.handlers.client_handlers import client_router
+from app.database.requests import populate_db
 from app.database.models import create_tables
 
 
 async def main():
     await create_tables()
+    await populate_db()
     bot = Bot(settings.TG_TOKEN)
     await bot.delete_webhook(drop_pending_updates=True)
     dp = Dispatcher()
