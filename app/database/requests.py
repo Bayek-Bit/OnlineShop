@@ -1,6 +1,6 @@
 import json
 
-from app.database.models import async_session, User, Category, Item
+from app.database.models import async_session, User, Game, Category, Item
 from sqlalchemy import select, update, delete
 import redis.asyncio as redis
 
