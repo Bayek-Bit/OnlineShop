@@ -22,6 +22,17 @@ async def set_user(tg_id):
         return False
 
 
+async def get_games():
+    async with async_session() as session:
+        games = await session.scalars(select(Game))
+        return games.all()
+
+async def get_categories_by_game(game_id: int):
+    async with async_session() as session:
+        categories = session.scalars(select(Category).where(Category.game_id == game_id))
+        return categories.all()
+
+
 async def get_categories():
     async with async_session() as session:
         categories = await session.scalars(select(Category))
