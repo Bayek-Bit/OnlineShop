@@ -40,23 +40,24 @@ async def start(callback: CallbackQuery):
         await callback.message.answer(text=First_message, reply_markup=client_kb.menu)
 
 
+# Выбор игры
 @client_router.callback_query(F.data == "catalog")
 async def send_catalog(callback: CallbackQuery, state: FSMContext):
     # await clear_cart(user_id=callback.from_user.id) # - убрано, чтобы сохранить корзину при навигации
     await state.set_state(OrderForm.choosing_game)
     await callback.answer('')
-    await callback.message.edit_text("Выберите категорию:", reply_markup=await client_kb.categories_kb())
+    await callback.message.edit_text("Выберите игру:", reply_markup=await client_kb.games_kb())
 
-# Выбор игры
+# Выбор категории
 @client_router.callback_query(OrderForm.choosing_game, F.data.startswith("game_"))
-async def send_items(callback: CallbackQuery, state: FSMContext):
+async def send_categories(callback: CallbackQuery, state: FSMContext):
     await callback.answer('')
     game_id = int(callback.data.removeprefix("game_"))
     await state.update_data(game_id = game_id)
     await state.set_state(OrderForm.choosing_category)
-    await callback.message.edit_text("Выберите игру:", reply_markup=await client_kb.categories_kb(game_id))
+    await callback.message.edit_text("Выберите категорию:", reply_markup=await client_kb.categories_kb(game_id))
 
-# Выбор категории
+# Выбор товара
 @client_router.callback_query(OrderForm.choosing_category, F.data.startswith("category_"))
 async def send_items(callback: CallbackQuery, state: FSMContext):
     await callback.answer('')
@@ -109,6 +110,7 @@ async def back_to_categories(callback: CallbackQuery, state: FSMContext):
     else:
         # Fallback, если game_id потерян
         await callback.message.edit_text("Ошибка. Вернитесь в каталог.", reply_markup=client_kb.menu)
+        await state.clear()
 
 # Бэк к играм из категорий (если нужно, но "catalog" уже есть)
 @client_router.callback_query(OrderForm.choosing_category, F.data == "back_to_games")
