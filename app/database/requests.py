@@ -30,7 +30,7 @@ async def get_games():
 
 async def get_categories_by_game(game_id: int):
     async with async_session() as session:
-        categories = session.scalars(select(Category).where(Category.game_id == game_id))
+        categories = await session.scalars(select(Category).where(Category.game_id == game_id))
         return categories.all()
 
 
@@ -88,7 +88,7 @@ async def update_prices():
     async with async_session() as session:
         items = await session.scalars(select(Item))
         items = items.all()
-        data = {str(item.id): item.price for item in items}
+        data = {str(item.id): str(item.price) for item in items}
         await r.delete("prices")
         if data:
             await r.hset("prices", mapping=data)
@@ -111,7 +111,7 @@ async def add_to_cart(user_id: int, product_id: int, qty: int = 1):
 
 async def get_cart_item_qty(user_id: int, product_id: int):
     """Получить количество конкретного товара"""
-    qty = await r.hget(f"cart:{user_id}", product_id)
+    qty = await r.hget(f"cart:{user_id}", str(product_id))
     return int(qty) if qty else 0
 
 
@@ -135,8 +135,8 @@ async def get_cart_total(user_id: int):
     for pid_str, qty_str in cart.items():
         try:
             qty = int(qty_str)
-            price = float(prices.get(pid_str, 0))
+            price = int(prices.get(pid_str, '0'))
         except ValueError:
             continue
         total += qty * price
-    return int(total)
+    return total
