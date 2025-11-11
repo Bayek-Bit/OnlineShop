@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from app.database.requests import get_categories, get_items_by_category # db(sqlite for now)
+from app.database.requests import get_games, get_categories_by_game, get_items_by_category # db(sqlite for now)
 from app.database.requests import get_cart_item_qty # redis
 from app.settings.messages import reviews_channel, main_channel
 
@@ -18,12 +18,20 @@ about_us = InlineKeyboardMarkup(inline_keyboard=[
      ]
 ])
 
-async def categories_kb():
-    all_categories = await get_categories()
+async def games_kb():
+    all_games = await get_games()
+    kb = InlineKeyboardBuilder()
+    for game in all_games:
+        kb.row(InlineKeyboardButton(text=game.name, callback_data=f"game_{game.id}"))
+    kb.row(InlineKeyboardButton(text="На главную", callback_data="main_menu"))
+    return kb.as_markup()
+
+async def categories_kb(game_id: int):
+    all_categories = await get_categories_by_game(game_id)
     kb = InlineKeyboardBuilder()
     for category in all_categories:
-        print(category.name)
         kb.row(InlineKeyboardButton(text=category.name, callback_data=f"category_{category.id}"))
+    kb.row(InlineKeyboardButton(text="🔙 Назад к играм", callback_data="back_to_games"))
     kb.row(InlineKeyboardButton(text="На главную", callback_data="main_menu"))
     return kb.as_markup()
 
@@ -54,7 +62,7 @@ async def items_kb(user_id: int, category_id: int):
     )
 
     kb.row(
-        InlineKeyboardButton(text="🏠На главную", callback_data="catalog"),
+        InlineKeyboardButton(text="🔙 Назад к категориям", callback_data="back_to_categories"),
         InlineKeyboardButton(text="✅Подтвердить", callback_data="create_order")
     )
     return kb.as_markup()
