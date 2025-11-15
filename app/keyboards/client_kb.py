@@ -37,7 +37,7 @@ async def categories_kb(game_id: int):
     all_categories = await get_categories_by_game(game_id)
     kb = InlineKeyboardBuilder()
     # Если категорий нет в базе данных
-    if not all_categories:  # FIXED: Добавил обработку пустого списка (нет категорий)
+    if not all_categories:
         kb.row(InlineKeyboardButton(text="Нет категорий для этой игры", callback_data="back_to_games"))
         return kb.as_markup()
     # Если категории есть
@@ -53,7 +53,7 @@ async def items_kb(user_id: int, category_id: int):
     category_items = await get_items_by_category(category_id)
     kb = InlineKeyboardBuilder()
     # Если товаров нет в базе данных
-    if not category_items:  # FIXED: Добавил обработку пустого списка (нет товаров)
+    if not category_items:
         kb.row(InlineKeyboardButton(text="Нет товаров в этой категории", callback_data="back_to_categories"))
         return kb.as_markup()
     # Если товары есть
@@ -105,3 +105,8 @@ async def reset_items_count(markup: InlineKeyboardMarkup) -> InlineKeyboardMarku
             new_row.append(new_button)
         new_kb.inline_keyboard.append(new_row)
     return new_kb
+
+def payment_kb():
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="Оплатил", callback_data="paid"))
+    return kb.as_markup()

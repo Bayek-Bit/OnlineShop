@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from sqlalchemy import String, BigInteger, Integer, ForeignKey, DateTime
+from datetime import datetime, timezone, timedelta
+from sqlalchemy import String, BigInteger, Integer, Boolean, ForeignKey, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship, DeclarativeBase
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 
@@ -20,6 +20,13 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, nullable=False)
     tg_id = mapped_column(BigInteger, unique=True, nullable=False)
     role: Mapped[str] = mapped_column(String(25), nullable=False)
+    # Активные заказы для клиента и исполнителя
+    orders_as_client: Mapped[list["Order"]] = relationship("Order",
+                                                            foreign_keys="Order.user_id",
+                                                            back_populates="user")
+    orders_as_executor: Mapped[list["Order"]] = relationship("Order",
+                                                            foreign_keys="Order.executor_id",
+                                                            back_populates="executor")
 
 
 class Game(Base):
@@ -55,13 +62,15 @@ class Order(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
     total_sum: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String(25), default="pending_payment", nullable=False)
+    status: Mapped[str] = mapped_column(String(25), default=settings.ORDER_STATUS_PENDING_PAYMENT, nullable=False)
     executor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
     executor: Mapped["User"] = relationship("User", foreign_keys=[executor_id])
     # время создания
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     # дедлайн оплаты
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # подтверждение оплаты клиентом
+    payment_confirmed_by_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 async def create_tables():
     async with engine.begin() as conn:
