@@ -1,4 +1,3 @@
-# File: /app/handlers/client_handlers.pyk
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
