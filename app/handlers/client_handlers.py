@@ -9,7 +9,7 @@ from app.database.requests import set_user, has_active_order
 from app.database.requests import add_to_cart, clear_cart, create_order_in_db, confirm_user_payment
 from app.database.requests import get_cart_total, assign_executor, retry_assign_executor
 from app.settings.messages import First_message
-from app.settings.settings import settings
+from app.settings.settings import settings, PAYMENT_TIMEOUT
 import asyncio  # NEW: для таймеров
 client_router = Router()
 class OrderForm(StatesGroup):
