@@ -71,16 +71,48 @@ async def items_kb(user_id: int, category_id: int):
             callback_data=f"add_item_{category_id}_{item.id}"
         ))
 
-    # Передаем category_id, чтобы отобразить новую клавиатуру с товарами этой категории
-    kb.row(InlineKeyboardButton(
-        text="🗑 Сбросить корзину",
-        callback_data=f"reset_cart_category_{category_id}"
+    # Кнопки управления корзиной
+    kb.row(
+        InlineKeyboardButton(
+            text="🛒 Корзина",
+            callback_data="view_cart"
+        ),
+        InlineKeyboardButton(
+            text="🗑 Сбросить",
+            callback_data=f"reset_cart_category_{category_id}"
         )
     )
 
+    # Навигация и подтверждение
     kb.row(
-        InlineKeyboardButton(text="🔙 Назад к категориям", callback_data="back_to_categories"),
-        InlineKeyboardButton(text="✅Подтвердить", callback_data="create_order")
+        InlineKeyboardButton(
+            text="🔙 Назад к категориям", 
+            callback_data="back_to_categories"
+        ),
+        InlineKeyboardButton(
+            text="✅Подтвердить", 
+            callback_data="create_order"
+        )
+    )
+    return kb.as_markup()
+
+
+async def cart_view_kb(category_id: int):
+    """
+    Клавиатура для просмотра корзины.
+    
+    Args:
+        category_id: ID текущей категории для возврата
+        
+    Returns:
+        InlineKeyboardMarkup с кнопками навигации
+    """
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(
+            text="🔙 Вернуться к товарам",
+            callback_data=f"back_to_items_{category_id}"
+        )
     )
     return kb.as_markup()
 

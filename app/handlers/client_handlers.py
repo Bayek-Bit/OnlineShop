@@ -21,7 +21,8 @@ from app.database.requests import (
     set_user, has_active_order, add_to_cart, clear_cart,
     create_order_in_db, confirm_user_payment, get_cart_total,
     assign_executor, retry_assign_executor, check_payment_timeout,
-    get_executor_tg_id_by_order
+    get_executor_tg_id_by_order, get_cart_game_id,
+    get_cart_items_with_details, get_category_by_id
 )
 from app.settings.messages import First_message
 from app.settings.settings import settings, PAYMENT_TIMEOUT
@@ -139,14 +140,34 @@ async def send_items(callback: CallbackQuery, state: FSMContext):
     Показывает товары выбранной категории.
     
     Сохраняет category_id в состоянии и переводит в состояние выбора товара.
+    Если в корзине есть товары из другой игры, очищает корзину.
     """
     await callback.answer('')
     category_id = int(callback.data.removeprefix("category_"))
+    
+    # Получаем game_id выбранной категории
+    category = await get_category_by_id(category_id)
+    
+    if category:
+        # Проверяем, есть ли в корзине товары из другой игры
+        cart_game_id = await get_cart_game_id(callback.from_user.id)
+        if cart_game_id is not None and cart_game_id != category.game_id:
+            # Очищаем корзину, если товары из другой игры
+            await clear_cart(callback.from_user.id)
+            await callback.answer(
+                "Корзина очищена. Вы можете заказать товары только из одной игры.",
+                show_alert=True
+            )
+    
     await state.update_data(category_id=category_id)
     await state.set_state(OrderForm.choosing_item)
     
+    # Получаем итоговую сумму для отображения
+    total_sum = await get_cart_total(callback.from_user.id)
+    message_text = f"Выберите товар:\n\n🌑 Итого: {total_sum}р."
+    
     await callback.message.edit_text(
-        "Выберите товар:", 
+        message_text,
         reply_markup=await client_kb.items_kb(
             user_id=callback.from_user.id,
             category_id=category_id
@@ -177,8 +198,10 @@ async def add_item_to_cart(callback: CallbackQuery):
     await add_to_cart(callback.from_user.id, product_id, 1)
     total_sum = await get_cart_total(callback.from_user.id)
     
+    message_text = f"Выберите товар:\n\n🌑 Итого: {total_sum}р."
+    
     await callback.message.edit_text(
-        text=f"🌑 Итого: {total_sum}р.",
+        text=message_text,
         reply_markup=await client_kb.items_kb(
             user_id=callback.from_user.id,
             category_id=category_id
@@ -190,22 +213,103 @@ async def add_item_to_cart(callback: CallbackQuery):
     OrderForm.choosing_item, 
     F.data.startswith("reset_cart_category_")
 )
-async def reset_cart(callback: CallbackQuery):
+async def reset_cart(callback: CallbackQuery, state: FSMContext):
     """
     Очищает корзину и обновляет клавиатуру, убирая счетчики товаров.
     """
     await callback.answer('')
     await clear_cart(user_id=callback.from_user.id)
     
+    data = await state.get_data()
+    category_id = data.get('category_id')
+    
+    message_text = "Выберите товар:\n\n🌑 Итого: 0р."
+    
     await callback.message.edit_text(
-        text="🌑 Итого: 0р.",
-        reply_markup=await client_kb.reset_items_count(
-            callback.message.reply_markup
+        text=message_text,
+        reply_markup=await client_kb.items_kb(
+            user_id=callback.from_user.id,
+            category_id=category_id
         )
     )
 
 
+@client_router.callback_query(
+    OrderForm.choosing_item,
+    F.data == "view_cart"
+)
+async def view_cart(callback: CallbackQuery, state: FSMContext):
+    """
+    Показывает содержимое корзины со всеми выбранными товарами.
+    """
+    await callback.answer('')
+    
+    cart_items = await get_cart_items_with_details(callback.from_user.id)
+    total_sum = await get_cart_total(callback.from_user.id)
+    
+    if not cart_items:
+        message_text = "Корзина пуста."
+    else:
+        # Формируем список товаров по категориям
+        message_lines = ["🛒 <b>Ваша корзина:</b>\n"]
+        
+        # Группируем товары по категориям
+        items_by_category = {}
+        for item in cart_items:
+            cat_name = item['category_name']
+            if cat_name not in items_by_category:
+                items_by_category[cat_name] = []
+            items_by_category[cat_name].append(item)
+        
+        # Выводим товары по категориям
+        for cat_name, items in items_by_category.items():
+            message_lines.append(f"\n📦 <b>{cat_name}:</b>")
+            for item in items:
+                message_lines.append(
+                    f"  • {item['name']} x{item['quantity']} "
+                    f"= {item['total']}р."
+                )
+        
+        message_lines.append(f"\n\n🌑 <b>Итого: {total_sum}р.</b>")
+        message_text = "\n".join(message_lines)
+    
+    data = await state.get_data()
+    category_id = data.get('category_id')
+    
+    await callback.message.edit_text(
+        text=message_text,
+        reply_markup=await client_kb.cart_view_kb(category_id),
+        parse_mode="HTML"
+    )
+
+
 # ==================== Навигация назад ====================
+
+@client_router.callback_query(
+    OrderForm.choosing_item,
+    F.data.startswith("back_to_items_")
+)
+async def back_to_items(callback: CallbackQuery, state: FSMContext):
+    """
+    Возвращает пользователя к просмотру товаров категории.
+    
+    Формат callback_data: back_to_items_{category_id}
+    """
+    await callback.answer('')
+    category_id = int(callback.data.removeprefix("back_to_items_"))
+    await state.update_data(category_id=category_id)
+    
+    total_sum = await get_cart_total(callback.from_user.id)
+    message_text = f"Выберите товар:\n\n🌑 Итого: {total_sum}р."
+    
+    await callback.message.edit_text(
+        text=message_text,
+        reply_markup=await client_kb.items_kb(
+            user_id=callback.from_user.id,
+            category_id=category_id
+        )
+    )
+
 
 @client_router.callback_query(
     OrderForm.choosing_item, 
@@ -270,17 +374,49 @@ async def create_order(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("Корзина пуста.")
         return
     
+    # Получаем список товаров ДО очистки корзины
+    cart_items = await get_cart_items_with_details(callback.from_user.id)
+    
+    # Создаем заказ
     order = await create_order_in_db(callback.from_user.id, total_sum)
     await clear_cart(callback.from_user.id)
     await state.set_state(OrderForm.waiting_for_payment)
     await state.update_data(order_id=order.id)
     
-    # Отправляем реквизиты с кнопкой подтверждения оплаты
+    # Формируем сообщение с товарами
+    message_lines = [f"✅ <b>Заказ #{order.id} создан</b>\n"]
+    
+    if cart_items:
+        message_lines.append("\n📦 <b>Состав заказа:</b>")
+        
+        # Группируем товары по категориям
+        items_by_category = {}
+        for item in cart_items:
+            cat_name = item['category_name']
+            if cat_name not in items_by_category:
+                items_by_category[cat_name] = []
+            items_by_category[cat_name].append(item)
+        
+        # Выводим товары по категориям
+        for cat_name, items in items_by_category.items():
+            message_lines.append(f"\n<b>{cat_name}:</b>")
+            for item in items:
+                message_lines.append(
+                    f"  • {item['name']} x{item['quantity']} "
+                    f"= {item['total']}р."
+                )
+    
+    message_lines.append(f"\n\n🌑 <b>Итого: {total_sum}р.</b>")
+    message_lines.append(f"\n💳 <b>Реквизиты:</b> [вставь свои реквизиты]")
+    message_lines.append(
+        f"\n⏰ Оплатите в течение {PAYMENT_TIMEOUT // 60} мин."
+    )
+    
+    # Отправляем сообщение с товарами и реквизитами
     await callback.message.edit_text(
-        f"Заказ #{order.id} создан. Сумма: {total_sum}р.\n"
-        f"Реквизиты: [вставь свои реквизиты].\n"
-        f"Оплатите в течение {PAYMENT_TIMEOUT // 60} мин.",
-        reply_markup=client_kb.payment_kb()
+        "\n".join(message_lines),
+        reply_markup=client_kb.payment_kb(),
+        parse_mode="HTML"
     )
     
     # Запускаем фоновую задачу для проверки таймаута оплаты

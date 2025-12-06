@@ -67,6 +67,14 @@ async def get_categories_by_game(game_id: int) -> list[Category]:
         return categories.all()
 
 
+async def get_category_by_id(category_id: int) -> Optional[Category]:
+    """Возвращает категорию по её ID или None, если категория не найдена."""
+    async with async_session() as session:
+        return await session.scalar(
+            select(Category).where(Category.id == category_id)
+        )
+
+
 async def get_items_by_category(category_id: int) -> list[Item]:
     """
     Возвращает список товаров категории.
@@ -222,6 +230,124 @@ async def get_cart_item_qty(user_id: int, product_id: int) -> int:
 async def clear_cart(user_id: int):
     """Очищает корзину пользователя."""
     await r.delete(f"cart:{user_id}")
+
+
+async def get_cart_items_with_details(user_id: int) -> list[dict]:
+    """
+    Получает все товары из корзины с их деталями.
+    
+    Args:
+        user_id: Telegram ID пользователя
+        
+    Returns:
+        Список словарей с информацией о товарах:
+        [
+            {
+                'product_id': int,
+                'name': str,
+                'category_name': str,
+                'quantity': int,
+                'price': int,
+                'total': int
+            },
+            ...
+        ]
+    """
+    cart = await r.hgetall(f"cart:{user_id}")
+    if not cart:
+        return []
+    
+    # Получаем цены из Redis
+    prices = await r.hgetall("prices")
+    if not prices:
+        await update_prices()
+        prices = await r.hgetall("prices")
+    
+    items_details = []
+    
+    async with async_session() as session:
+        for pid_str, qty_str in cart.items():
+            try:
+                product_id = int(pid_str)
+                qty = int(str(qty_str).strip())
+                
+                # Получаем информацию о товаре из БД
+                item = await session.scalar(
+                    select(Item).where(Item.id == product_id)
+                )
+                if not item:
+                    continue
+                
+                # Получаем цену
+                price_str = prices.get(pid_str)
+                if not price_str:
+                    # Если цены нет в Redis, используем цену из БД
+                    price = item.price
+                else:
+                    price = int(str(price_str).strip())
+                
+                # Получаем название категории
+                category = await session.scalar(
+                    select(Category).where(Category.id == item.category_id)
+                )
+                category_name = category.name if category else "Неизвестно"
+                
+                items_details.append({
+                    'product_id': product_id,
+                    'name': item.name,
+                    'category_name': category_name,
+                    'quantity': qty,
+                    'price': price,
+                    'total': qty * price
+                })
+                
+            except (ValueError, TypeError) as e:
+                print(f"Error processing cart item pid={pid_str}, "
+                      f"qty={qty_str}: {e}")
+                continue
+    
+    return items_details
+
+
+async def get_cart_game_id(user_id: int) -> Optional[int]:
+    """
+    Получает game_id всех товаров в корзине.
+    
+    Если все товары принадлежат одной игре, возвращает её ID.
+    Если товары из разных игр или корзина пуста, возвращает None.
+    
+    Args:
+        user_id: Telegram ID пользователя
+        
+    Returns:
+        ID игры, если все товары из одной игры, иначе None
+    """
+    cart = await r.hgetall(f"cart:{user_id}")
+    if not cart:
+        return None
+    
+    game_ids = set()
+    
+    async with async_session() as session:
+        for pid_str in cart.keys():
+            try:
+                product_id = int(pid_str)
+                item = await session.scalar(
+                    select(Item).where(Item.id == product_id)
+                )
+                if item:
+                    category = await session.scalar(
+                        select(Category).where(Category.id == item.category_id)
+                    )
+                    if category:
+                        game_ids.add(category.game_id)
+            except (ValueError, TypeError):
+                continue
+    
+    # Если все товары из одной игры, возвращаем её ID
+    if len(game_ids) == 1:
+        return game_ids.pop()
+    return None
 
 
 async def get_cart_total(user_id: int) -> int:
