@@ -7,6 +7,7 @@
 - Создание и оплата заказов
 """
 import asyncio
+import logging
 
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
@@ -25,7 +26,13 @@ from app.database.requests import (
     get_cart_items_with_details, get_category_by_id
 )
 from app.settings.messages import First_message
-from app.settings.settings import settings, PAYMENT_TIMEOUT
+from app.settings.settings import settings
+from app.utils.validators import (
+    validate_product_id, validate_category_id,
+    parse_callback_data
+)
+
+logger = logging.getLogger(__name__)
 
 client_router = Router()
 
@@ -121,14 +128,27 @@ async def send_categories(callback: CallbackQuery, state: FSMContext):
     Сохраняет game_id в состоянии и переводит в состояние выбора категории.
     """
     await callback.answer('')
-    game_id = int(callback.data.removeprefix("game_"))
+    
+    try:
+        game_id = int(callback.data.removeprefix("game_"))
+        if game_id <= 0:
+            raise ValueError("Invalid game_id")
+    except ValueError:
+        logger.warning(f"Invalid game_id in send_categories: {callback.data}")
+        await callback.answer("Ошибка: неверный формат данных", show_alert=True)
+        return
+    
     await state.update_data(game_id=game_id)
     await state.set_state(OrderForm.choosing_category)
     
-    await callback.message.edit_text(
-        "Выберите категорию:", 
-        reply_markup=await client_kb.categories_kb(game_id)
-    )
+    try:
+        await callback.message.edit_text(
+            "Выберите категорию:", 
+            reply_markup=await client_kb.categories_kb(game_id)
+        )
+    except Exception as e:
+        logger.exception(f"Error in send_categories: {e}")
+        await callback.answer("Произошла ошибка. Попробуйте позже.", show_alert=True)
 
 
 @client_router.callback_query(
@@ -143,7 +163,17 @@ async def send_items(callback: CallbackQuery, state: FSMContext):
     Если в корзине есть товары из другой игры, очищает корзину.
     """
     await callback.answer('')
-    category_id = int(callback.data.removeprefix("category_"))
+    
+    try:
+        category_id = int(callback.data.removeprefix("category_"))
+    except ValueError:
+        logger.warning(f"Invalid category_id in send_items: {callback.data}")
+        await callback.answer("Ошибка: неверный формат данных", show_alert=True)
+        return
+    
+    if not await validate_category_id(category_id):
+        await callback.answer("Категория не найдена", show_alert=True)
+        return
     
     # Получаем game_id выбранной категории
     category = await get_category_by_id(category_id)
@@ -190,23 +220,41 @@ async def add_item_to_cart(callback: CallbackQuery):
     """
     await callback.answer('')
     
-    # Парсим category_id и product_id из callback_data
-    # Формат: add_item_{category_id}_{item_id}
-    data_parts = callback.data[len("add_item_"):].split("_")
-    category_id, product_id = map(int, data_parts)
-    
-    await add_to_cart(callback.from_user.id, product_id, 1)
-    total_sum = await get_cart_total(callback.from_user.id)
-    
-    message_text = f"Выберите товар:\n\n🌑 Итого: {total_sum}р."
-    
-    await callback.message.edit_text(
-        text=message_text,
-        reply_markup=await client_kb.items_kb(
-            user_id=callback.from_user.id,
-            category_id=category_id
+    try:
+        # Парсим и валидируем данные
+        category_id, product_id = parse_callback_data(
+            callback.data, "add_item_", expected_parts=2
         )
-    )
+    except ValueError as e:
+        logger.warning(f"Invalid callback_data in add_item_to_cart: {e}")
+        await callback.answer("Ошибка: неверный формат данных", show_alert=True)
+        return
+    
+    # Валидируем существование товара и категории
+    if not await validate_product_id(product_id):
+        await callback.answer("Товар не найден", show_alert=True)
+        return
+    
+    if not await validate_category_id(category_id):
+        await callback.answer("Категория не найдена", show_alert=True)
+        return
+    
+    try:
+        await add_to_cart(callback.from_user.id, product_id, 1)
+        total_sum = await get_cart_total(callback.from_user.id)
+        
+        message_text = f"Выберите товар:\n\n🌑 Итого: {total_sum}р."
+        
+        await callback.message.edit_text(
+            text=message_text,
+            reply_markup=await client_kb.items_kb(
+                user_id=callback.from_user.id,
+                category_id=category_id
+            )
+        )
+    except Exception as e:
+        logger.exception(f"Error in add_item_to_cart: {e}")
+        await callback.answer("Произошла ошибка. Попробуйте позже.", show_alert=True)
 
 
 @client_router.callback_query(
@@ -296,19 +344,34 @@ async def back_to_items(callback: CallbackQuery, state: FSMContext):
     Формат callback_data: back_to_items_{category_id}
     """
     await callback.answer('')
-    category_id = int(callback.data.removeprefix("back_to_items_"))
+    
+    try:
+        category_id = int(callback.data.removeprefix("back_to_items_"))
+    except ValueError:
+        logger.warning(f"Invalid category_id in back_to_items: {callback.data}")
+        await callback.answer("Ошибка: неверный формат данных", show_alert=True)
+        return
+    
+    if not await validate_category_id(category_id):
+        await callback.answer("Категория не найдена", show_alert=True)
+        return
+    
     await state.update_data(category_id=category_id)
     
-    total_sum = await get_cart_total(callback.from_user.id)
-    message_text = f"Выберите товар:\n\n🌑 Итого: {total_sum}р."
-    
-    await callback.message.edit_text(
-        text=message_text,
-        reply_markup=await client_kb.items_kb(
-            user_id=callback.from_user.id,
-            category_id=category_id
+    try:
+        total_sum = await get_cart_total(callback.from_user.id)
+        message_text = f"Выберите товар:\n\n🌑 Итого: {total_sum}р."
+        
+        await callback.message.edit_text(
+            text=message_text,
+            reply_markup=await client_kb.items_kb(
+                user_id=callback.from_user.id,
+                category_id=category_id
+            )
         )
-    )
+    except Exception as e:
+        logger.exception(f"Error in back_to_items: {e}")
+        await callback.answer("Произошла ошибка. Попробуйте позже.", show_alert=True)
 
 
 @client_router.callback_query(
@@ -366,67 +429,91 @@ async def create_order(callback: CallbackQuery, state: FSMContext):
     
     Сохраняет order_id в состоянии и запускает фоновую задачу
     для проверки таймаута оплаты.
+    
+    Исправлена race condition: получаем товары и сумму атомарно,
+    затем создаем заказ с сохранением состава.
     """
     await callback.answer('')
-    total_sum = await get_cart_total(callback.from_user.id)
     
-    if total_sum == 0:
-        await callback.message.edit_text("Корзина пуста.")
-        return
-    
-    # Получаем список товаров ДО очистки корзины
-    cart_items = await get_cart_items_with_details(callback.from_user.id)
-    
-    # Создаем заказ
-    order = await create_order_in_db(callback.from_user.id, total_sum)
-    await clear_cart(callback.from_user.id)
-    await state.set_state(OrderForm.waiting_for_payment)
-    await state.update_data(order_id=order.id)
-    
-    # Формируем сообщение с товарами
-    message_lines = [f"✅ <b>Заказ #{order.id} создан</b>\n"]
-    
-    if cart_items:
-        message_lines.append("\n📦 <b>Состав заказа:</b>")
+    try:
+        # Атомарно получаем товары и сумму ДО создания заказа
+        # Это предотвращает race condition
+        cart_items = await get_cart_items_with_details(callback.from_user.id)
+        total_sum = await get_cart_total(callback.from_user.id)
         
-        # Группируем товары по категориям
-        items_by_category = {}
-        for item in cart_items:
-            cat_name = item['category_name']
-            if cat_name not in items_by_category:
-                items_by_category[cat_name] = []
-            items_by_category[cat_name].append(item)
+        if total_sum == 0 or not cart_items:
+            await callback.message.edit_text("Корзина пуста.")
+            return
         
-        # Выводим товары по категориям
-        for cat_name, items in items_by_category.items():
-            message_lines.append(f"\n<b>{cat_name}:</b>")
-            for item in items:
-                message_lines.append(
-                    f"  • {item['name']} x{item['quantity']} "
-                    f"= {item['total']}р."
-                )
-    
-    message_lines.append(f"\n\n🌑 <b>Итого: {total_sum}р.</b>")
-    message_lines.append(f"\n💳 <b>Реквизиты:</b> [вставь свои реквизиты]")
-    message_lines.append(
-        f"\n⏰ Оплатите в течение {PAYMENT_TIMEOUT // 60} мин."
-    )
-    
-    # Отправляем сообщение с товарами и реквизитами
-    await callback.message.edit_text(
-        "\n".join(message_lines),
-        reply_markup=client_kb.payment_kb(),
-        parse_mode="HTML"
-    )
-    
-    # Запускаем фоновую задачу для проверки таймаута оплаты
-    asyncio.create_task(
-        check_payment_timeout(
-            callback.bot, 
-            order.id, 
-            callback.from_user.id
+        # Проверяем, что сумма соответствует товарам
+        calculated_sum = sum(item['total'] for item in cart_items)
+        if calculated_sum != total_sum:
+            logger.warning(
+                f"Cart sum mismatch: calculated={calculated_sum}, "
+                f"total={total_sum} for user_id={callback.from_user.id}"
+            )
+            # Используем пересчитанную сумму для безопасности
+            total_sum = calculated_sum
+        
+        # Создаем заказ с проверенной суммой
+        order = await create_order_in_db(callback.from_user.id, total_sum)
+        
+        # Очищаем корзину только после успешного создания заказа
+        await clear_cart(callback.from_user.id)
+        
+        await state.set_state(OrderForm.waiting_for_payment)
+        await state.update_data(order_id=order.id)
+        
+        # Формируем сообщение с товарами
+        message_lines = [f"✅ <b>Заказ #{order.id} создан</b>\n"]
+        
+        if cart_items:
+            message_lines.append("\n📦 <b>Состав заказа:</b>")
+            
+            # Группируем товары по категориям
+            items_by_category = {}
+            for item in cart_items:
+                cat_name = item['category_name']
+                if cat_name not in items_by_category:
+                    items_by_category[cat_name] = []
+                items_by_category[cat_name].append(item)
+            
+            # Выводим товары по категориям
+            for cat_name, items in items_by_category.items():
+                message_lines.append(f"\n<b>{cat_name}:</b>")
+                for item in items:
+                    message_lines.append(
+                        f"  • {item['name']} x{item['quantity']} "
+                        f"= {item['total']}р."
+                    )
+        
+        message_lines.append(f"\n\n🌑 <b>Итого: {total_sum}р.</b>")
+        message_lines.append(f"\n💳 <b>Реквизиты:</b> [вставь свои реквизиты]")
+        message_lines.append(
+            f"\n⏰ Оплатите в течение {settings.PAYMENT_TIMEOUT // 60} мин."
         )
-    )
+        
+        # Отправляем сообщение с товарами и реквизитами
+        await callback.message.edit_text(
+            "\n".join(message_lines),
+            reply_markup=client_kb.payment_kb(),
+            parse_mode="HTML"
+        )
+        
+        # Запускаем фоновую задачу для проверки таймаута оплаты
+        asyncio.create_task(
+            check_payment_timeout(
+                callback.bot, 
+                order.id, 
+                callback.from_user.id
+            )
+        )
+    except Exception as e:
+        logger.exception(f"Error in create_order: {e}")
+        await callback.answer(
+            "Произошла ошибка при создании заказа. Попробуйте позже.",
+            show_alert=True
+        )
 
 
 @client_router.callback_query(

@@ -72,7 +72,18 @@ class Order(Base):
     # подтверждение оплаты клиентом
     payment_confirmed_by_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-async def create_tables():
+async def create_tables(drop_existing: bool = False):
+    """
+    Создает таблицы в базе данных.
+    
+    Args:
+        drop_existing: Если True, удаляет существующие таблицы перед созданием.
+                      ВНИМАНИЕ: Это удалит все данные! Используйте только для разработки.
+    
+    Warning:
+        Никогда не используйте drop_existing=True в продакшене!
+    """
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        if drop_existing:
+            await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)

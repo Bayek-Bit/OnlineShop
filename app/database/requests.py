@@ -9,22 +9,42 @@
 """
 import json
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select, update
 import redis.asyncio as redis
+from redis.exceptions import (
+    ConnectionError as RedisConnectionError,
+    RedisError,
+    TimeoutError as RedisTimeoutError
+)
 from aiogram import Bot
 
 from app.database.models import (
     async_session, User, Game, Category, Item, Order
 )
-from app.settings.settings import (
-    CART_TTL, ITEMS_TTL, settings, PAYMENT_TIMEOUT
-)
+from app.settings.settings import settings
 
-# Подключение к Redis
-r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+# Настройка логирования
+logger = logging.getLogger(__name__)
+
+# Подключение к Redis с настройками из конфигурации
+try:
+    r = redis.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        db=settings.REDIS_DB,
+        password=settings.REDIS_PASSWORD,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True
+    )
+except Exception as e:
+    logger.error(f"Failed to connect to Redis: {e}")
+    raise
 
 
 # ==================== Работа с пользователями ====================
@@ -124,7 +144,7 @@ async def get_items_by_category(category_id: int) -> list[Item]:
             }) for item in items
         }
         await r.hset(redis_key, mapping=mapping)
-        await r.expire(redis_key, ITEMS_TTL)
+        await r.expire(redis_key, settings.ITEMS_TTL)
     
     return items
 
@@ -142,20 +162,27 @@ async def update_prices():
             items = items.all()
             
             if not items:
-                print("Warning: No items found in database for price update")
+                logger.warning("No items found in database for price update")
                 return
             
             # Формируем словарь {item_id: price} для сохранения в Redis
             data = {str(item.id): str(item.price) for item in items}
-            await r.delete("prices")
             
-            if data:
-                await r.hset("prices", mapping=data)
-                print(f"Updated prices for {len(data)} items in Redis")
-            else:
-                print("Warning: Empty data dict for price update")
+            try:
+                await r.delete("prices")
+                if data:
+                    await r.hset("prices", mapping=data)
+                    logger.info(f"Updated prices for {len(data)} items in Redis")
+                else:
+                    logger.warning("Empty data dict for price update")
+            except (RedisConnectionError, RedisError) as e:
+                logger.error(f"Redis error in update_prices: {e}")
+                raise
+    except (RedisConnectionError, RedisError) as e:
+        logger.error(f"Redis connection error in update_prices: {e}")
+        raise
     except Exception as e:
-        print(f"Error in update_prices: {e}")
+        logger.exception(f"Unexpected error in update_prices: {e}")
         raise
 
 
@@ -194,11 +221,19 @@ async def add_to_cart(user_id: int, product_id: int, qty: int = 1):
         
         # Сохраняем в Redis
         await r.hset(key, product_id_str, str(new_qty))
-        await r.expire(key, CART_TTL)
+        await r.expire(key, settings.CART_TTL)
             
+    except (RedisConnectionError, RedisTimeoutError) as e:
+        logger.error(f"Redis connection error in add_to_cart for "
+                    f"user_id={user_id}, product_id={product_id}: {e}")
+        raise
+    except RedisError as e:
+        logger.error(f"Redis error in add_to_cart for "
+                    f"user_id={user_id}, product_id={product_id}: {e}")
+        raise
     except Exception as e:
-        print(f"Error in add_to_cart for user_id={user_id}, "
-              f"product_id={product_id}: {e}")
+        logger.exception(f"Unexpected error in add_to_cart for "
+                        f"user_id={user_id}, product_id={product_id}: {e}")
         raise
 
 
@@ -221,15 +256,38 @@ async def get_cart_item_qty(user_id: int, product_id: int) -> int:
             except (ValueError, TypeError, AttributeError):
                 return 0
         return 0
+    except (RedisConnectionError, RedisTimeoutError) as e:
+        logger.error(f"Redis connection error in get_cart_item_qty for "
+                    f"user_id={user_id}, product_id={product_id}: {e}")
+        return 0
+    except RedisError as e:
+        logger.error(f"Redis error in get_cart_item_qty for "
+                    f"user_id={user_id}, product_id={product_id}: {e}")
+        return 0
     except Exception as e:
-        print(f"Error in get_cart_item_qty for user_id={user_id}, "
-              f"product_id={product_id}: {e}")
+        logger.exception(f"Unexpected error in get_cart_item_qty for "
+                        f"user_id={user_id}, product_id={product_id}: {e}")
         return 0
 
 
 async def clear_cart(user_id: int):
-    """Очищает корзину пользователя."""
-    await r.delete(f"cart:{user_id}")
+    """
+    Очищает корзину пользователя.
+    
+    Args:
+        user_id: Telegram ID пользователя
+        
+    Raises:
+        RedisError: При ошибке работы с Redis
+    """
+    try:
+        await r.delete(f"cart:{user_id}")
+    except (RedisConnectionError, RedisTimeoutError) as e:
+        logger.error(f"Redis connection error in clear_cart for user_id={user_id}: {e}")
+        raise
+    except RedisError as e:
+        logger.error(f"Redis error in clear_cart for user_id={user_id}: {e}")
+        raise
 
 
 async def get_cart_items_with_details(user_id: int) -> list[dict]:
@@ -302,8 +360,8 @@ async def get_cart_items_with_details(user_id: int) -> list[dict]:
                 })
                 
             except (ValueError, TypeError) as e:
-                print(f"Error processing cart item pid={pid_str}, "
-                      f"qty={qty_str}: {e}")
+                logger.warning(f"Error processing cart item pid={pid_str}, "
+                             f"qty={qty_str}: {e}")
                 continue
     
     return items_details
@@ -382,36 +440,44 @@ async def get_cart_total(user_id: int) -> int:
             
             # Если цена не найдена, обновляем цены и пробуем снова
             if price_str is None:
-                print(f"Price not found for product_id={pid_str}, "
-                      f"updating prices...")
-                await update_prices()
-                prices = await r.hgetall("prices")
-                price_str = prices.get(pid_str)
+                logger.warning(f"Price not found for product_id={pid_str}, "
+                             f"updating prices...")
+                try:
+                    await update_prices()
+                    prices = await r.hgetall("prices")
+                    price_str = prices.get(pid_str)
+                except (RedisConnectionError, RedisError) as e:
+                    logger.error(f"Failed to update prices: {e}")
+                    continue
                 
                 if price_str is None:
                     available_ids = list(prices.keys())[:10]
-                    print(f"Warning: Price still not found for "
-                          f"product_id={pid_str} after update. "
-                          f"Available product IDs: {available_ids}")
+                    logger.warning(f"Price still not found for "
+                                 f"product_id={pid_str} after update. "
+                                 f"Available product IDs: {available_ids}")
                     continue
             
             try:
                 price = int(str(price_str).strip())
                 item_total = qty * price
                 total += item_total
-                print(f"Cart item: product_id={pid_str}, qty={qty}, "
-                      f"price={price}, item_total={item_total}, total={total}")
+                logger.debug(f"Cart item: product_id={pid_str}, qty={qty}, "
+                           f"price={price}, item_total={item_total}, total={total}")
             except (ValueError, TypeError) as e:
-                print(f"Warning: Invalid price value for "
-                      f"product_id={pid_str}: {price_str}, error: {e}")
+                logger.warning(f"Invalid price value for "
+                             f"product_id={pid_str}: {price_str}, error: {e}")
                 continue
                 
         except (ValueError, TypeError) as e:
-            print(f"Error processing cart item pid={pid_str}, "
-                  f"qty={qty_str}: {e}")
+            logger.warning(f"Error processing cart item pid={pid_str}, "
+                         f"qty={qty_str}: {e}")
             continue
+        except (RedisConnectionError, RedisError) as e:
+            logger.error(f"Redis error in get_cart_total: {e}")
+            # Возвращаем текущую сумму, даже если не все товары обработаны
+            break
     
-    print(f"Final cart total for user_id={user_id}: {total}")
+    logger.debug(f"Final cart total for user_id={user_id}: {total}")
     return total
 
 
@@ -479,7 +545,7 @@ async def create_order_in_db(user_tg_id: int, total_sum: int) -> Order:
             user_id=user.id,
             total_sum=total_sum,
             expires_at=datetime.now(timezone.utc) + 
-                       timedelta(seconds=PAYMENT_TIMEOUT)
+                       timedelta(seconds=settings.PAYMENT_TIMEOUT)
         )
         session.add(order)
         await session.commit()
