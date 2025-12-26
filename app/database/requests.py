@@ -25,7 +25,7 @@ from aiogram import Bot
 from app.database.models import (
     async_session, User, Game, Category, Item, Order
 )
-from app.settings.settings import settings
+from app.settings.settings import settings, Settings
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -635,7 +635,8 @@ async def retry_assign_executor(bot: Bot, order_id: int, user_tg_id: int):
         order_id: ID заказа
         user_tg_id: Telegram ID пользователя
     """
-    await asyncio.sleep(300)  # 5 минут
+    # Должна быть константа
+    await asyncio.sleep(Settings.ASSIGN_TIMEOUT)  # 5 минут
     
     assigned = await assign_executor(order_id)
     if assigned:
@@ -651,7 +652,7 @@ async def retry_assign_executor(bot: Bot, order_id: int, user_tg_id: int):
         )
         await bot.send_message(
             user_tg_id, 
-            "Нет доступных исполнителей. Заказ отменён."
+            "💔Нет доступных исполнителей. Заказ отменён.\n\nПопробуйте связаться с исполнителем лично."
         )
 
 
@@ -859,11 +860,12 @@ async def populate_db():
         
         # Создание товаров для Brawl Stars
         brawl_items = [
-            ("170 Gems", 99),
-            ("500 Gems", 249),
-            ("1100 Gems", 499),
-            ("2400 Gems", 999),
-            ("5000 Gems", 1999),
+            ("🟢30 Гемов", 200),
+            ("🟢80 (75+5) Гемов", 450),
+            ("🟢170 (151+19) Гемов", 499),
+            ("🟢360 (301+59) Гемов", 999),
+            ("🟢950 (754+196) Гемов", 1999),
+            ("🟢2000 (1507+493) Гемов", 1999),
         ]
         added_brawl = 0
         for name, price in brawl_items:
